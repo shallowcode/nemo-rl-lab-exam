@@ -144,7 +144,7 @@ def main() -> None:
 
     config.logger["log_dir"] = get_next_experiment_dir(config.logger["log_dir"])
     init_ray()
-    set_seed(config.grpo.seed)
+    set_seed(config.grpo["seed"])
 
     tokenizer = get_tokenizer(config.policy["tokenizer"])
     config.policy["generation"] = configure_generation_config(
