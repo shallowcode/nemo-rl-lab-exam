@@ -149,13 +149,13 @@ def main():
     env = QARewardEnv.options(num_gpus=0).remote(cfg=dict(env_cfg))
     task_to_env = {TASK_NAME: env}
 
-    # NeMo-RL main：setup() 返回 11 个值（新增第 3 位 nemo_gym actor，cluster 变为
-    # (train_cluster, inference_cluster) 元组）。未使用的用 _ 前缀占位。
+    # NeMo-RL 0.7.0：setup() 返回 13 个值（nemo_gym + teacher OPD 两组）。
+    # 同步 grpo_train 不用最后两个；未使用的用 _ 前缀占位。
     (
         policy,
         policy_generation,
         _nemo_gym,
-        cluster,
+        _cluster,
         dataloader,
         val_dataloader,
         loss_fn,
@@ -163,6 +163,8 @@ def main():
         checkpointer,
         grpo_state,
         master_config,
+        _teacher_worker_groups,
+        _alias_to_group_alias,
     ) = setup(config, tokenizer, train_dataset, val_dataset)
 
     grpo_train(
