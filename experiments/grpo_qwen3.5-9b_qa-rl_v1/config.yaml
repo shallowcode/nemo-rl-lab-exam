@@ -53,7 +53,7 @@ grpo:
   max_rollout_turns: 1 # 单轮：答一道题，环境判分即结束
   max_num_steps: 400 # 这类任务 ~100-200 步即收敛，500 多为空转；val_at_end 兜底
   val_period: 50
-  val_at_start: true
+  val_at_start: false
   val_at_end: true
   max_val_samples: 256
   val_batch_size: 64 # <= max_val_samples
@@ -80,7 +80,7 @@ env:
     cfg:
       # true：简答题用裁判 LLM（需 JUDGE_BASE_URL 等环境变量；连不上自动回退关键词覆盖率）
       # false：全部走规则判分，零成本、无需裁判端点
-      use_judge: true
+      use_judge: false
 
 logger:
   wandb_enabled: false
