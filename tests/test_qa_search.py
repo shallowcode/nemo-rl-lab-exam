@@ -168,6 +168,39 @@ def test_runner_search_then_answer(tmp_path):
     assert answer_result[5] == "A"
 
 
+def test_runner_rewards_only_first_search_when_configured(tmp_path):
+    (tmp_path / "guide.md").write_text(
+        "# 控制图\nExclude 功能可以永久排除 Sample。", encoding="utf-8"
+    )
+    index = MarkdownSearchIndex(tmp_path, chunk_chars=200, overlap_chars=20)
+    runner = QASearchRunner(
+        index,
+        reward_fn=lambda *_args: [0.0],
+        boxed_extractor=lambda _text: None,
+        max_searches=2,
+        max_turns=4,
+        first_search_reward=0.05,
+    )
+    metadata = {
+        "query": "哪个功能可以永久排除 Sample？",
+        "expected_answer": "[single] A",
+        "num_searches": 0,
+        "num_turns": 0,
+    }
+
+    first_search = runner.process_turn(
+        [{"role": "assistant", "content": "<search>永久排除 Sample</search>"}],
+        metadata,
+    )
+    second_search = runner.process_turn(
+        [{"role": "assistant", "content": "<search>控制图 Exclude</search>"}],
+        first_search[4],
+    )
+
+    assert first_search[1] == 0.05
+    assert second_search[1] == 0.0
+
+
 def test_runner_recovers_placeholder_and_allows_final_turn(tmp_path):
     (tmp_path / "guide.md").write_text(
         "# Server Room\nServer Room 通过 SQL Server 与 Clean Room 连接。",

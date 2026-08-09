@@ -53,6 +53,7 @@ class QASearchEnv(EnvironmentInterface[QASearchMetadata]):
             max_searches=int(cfg.get("max_searches", 2)),
             max_turns=int(cfg.get("max_turns", 3)),
             format_penalty=float(cfg.get("format_penalty", FORMAT_PENALTY)),
+            first_search_reward=float(cfg.get("first_search_reward", 0.0)),
         )
 
     def get_stats(self) -> dict[str, int | str]:

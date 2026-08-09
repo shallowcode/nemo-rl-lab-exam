@@ -370,6 +370,7 @@ class QASearchRunner:
         max_searches: int = 2,
         max_turns: int = 3,
         format_penalty: float = -0.5,
+        first_search_reward: float = 0.0,
     ) -> None:
         self.index = index
         self.reward_fn = reward_fn
@@ -379,6 +380,7 @@ class QASearchRunner:
         self.max_searches = max_searches
         self.max_turns = max_turns
         self.format_penalty = format_penalty
+        self.first_search_reward = first_search_reward
 
     def process_turn(
         self,
@@ -449,7 +451,7 @@ class QASearchRunner:
             )
             return (
                 {"role": "environment", "content": observation},
-                0.0,
+                self.first_search_reward if searches == 0 else 0.0,
                 False,
                 ["</search>"],
                 next_metadata,

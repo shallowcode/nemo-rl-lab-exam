@@ -21,22 +21,22 @@ policy:
       gpu_memory_utilization: 0.6
 
 grpo:
-  num_prompts_per_step: 4
-  num_generations_per_prompt: 8
+  num_prompts_per_step: 8
+  num_generations_per_prompt: 4
   max_rollout_turns: 5
   max_num_steps: 40
-  val_period: 20
+  val_period: 10
   val_at_start: true
   val_at_end: true
   max_val_samples: 64
   val_batch_size: 16
 
 loss_fn:
-  reference_policy_kl_penalty: 0.01
+  reference_policy_kl_penalty: 0.02
 
 checkpointing:
   enabled: true
-  save_period: 20
+  save_period: 10
 
 data:
   shuffle: true
@@ -66,6 +66,7 @@ env:
       b: 0.75
       use_judge: true
       format_penalty: -0.5
+      first_search_reward: 0.05
 
 logger:
   wandb_enabled: false

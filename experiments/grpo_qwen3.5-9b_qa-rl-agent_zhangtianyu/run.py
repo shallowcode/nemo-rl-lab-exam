@@ -201,10 +201,14 @@ def main() -> None:
         flush=True,
     )
 
-    env_cfg = dict(config.env[TASK_NAME]["cfg"])
-    env = QASearchEnv.options(num_gpus=0).remote(cfg=env_cfg)
-    print("Document index:", ray.get(env.get_stats.remote()), flush=True)
-    task_to_env = {TASK_NAME: env}
+    train_env_cfg = dict(config.env[TASK_NAME]["cfg"])
+    val_env_cfg = dict(train_env_cfg)
+    val_env_cfg["first_search_reward"] = 0.0
+    train_env = QASearchEnv.options(num_gpus=0).remote(cfg=train_env_cfg)
+    val_env = QASearchEnv.options(num_gpus=0).remote(cfg=val_env_cfg)
+    print("Document index:", ray.get(train_env.get_stats.remote()), flush=True)
+    train_task_to_env = {TASK_NAME: train_env}
+    val_task_to_env = {TASK_NAME: val_env}
 
     (
         policy,
@@ -229,8 +233,8 @@ def main() -> None:
         val_dataloader,
         tokenizer,
         loss_fn,
-        task_to_env,
-        task_to_env,
+        train_task_to_env,
+        val_task_to_env,
         logger,
         checkpointer,
         grpo_state,
