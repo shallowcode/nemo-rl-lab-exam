@@ -45,6 +45,7 @@ _GENERIC_SEARCH_PREFIXES = (
     "简洁关键词",
     "关键词",
 )
+_SOURCE_VARIANT_SUFFIX = re.compile(r"(?:[_\s-]*(?:水印|watermark))+$", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -88,6 +89,13 @@ def _technical_identifiers(text: str) -> set[str]:
     }
     identifiers.update(_normalize(token) for token in _UPPER_IDENTIFIER.findall(text))
     return identifiers
+
+
+def _canonical_source(source: str) -> str:
+    """Collapse exported duplicates such as ``manual.md`` and ``manual_水印.md``."""
+    path = Path(source)
+    stem = _SOURCE_VARIANT_SUFFIX.sub("", path.stem)
+    return (path.parent / stem).as_posix().lower()
 
 
 def _is_substantive_boxed_answer(answer: str | None) -> bool:
@@ -308,6 +316,7 @@ class MarkdownSearchIndex:
         ranked = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
         hits: list[SearchHit] = []
         seen_bodies: set[str] = set()
+        source_counts: Counter[str] = Counter()
         for chunk_id, score in ranked:
             normalized_chunk = self._normalized_chunks[chunk_id]
             if identifiers and not all(
@@ -319,7 +328,11 @@ class MarkdownSearchIndex:
             body_signature = re.sub(r"\s+", "", _normalize(body))
             if body_signature in seen_bodies:
                 continue
+            canonical_source = _canonical_source(chunk.source)
+            if source_counts[canonical_source] >= 2:
+                continue
             seen_bodies.add(body_signature)
+            source_counts[canonical_source] += 1
             hits.append(SearchHit(chunk, score))
             if len(hits) >= top_k:
                 break

@@ -137,6 +137,32 @@ def test_duplicate_document_bodies_are_removed_from_results(tmp_path):
     assert len(bodies) == len(set(bodies))
 
 
+def test_watermarked_export_does_not_crowd_out_other_sources(tmp_path):
+    (tmp_path / "LAM DVP Training.md").write_text(
+        "# Module 1\ndispenser arm process module overview\n"
+        "# Module 2\ndispenser arm maintenance details\n"
+        "# Module 3\ndispenser arm alarm handling",
+        encoding="utf-8",
+    )
+    (tmp_path / "LAM DVP Training_水印.md").write_text(
+        "# Module 1\ndispenser arm process module overview with watermark\n"
+        "# Module 2\ndispenser arm maintenance details with watermark\n"
+        "# Module 3\ndispenser arm alarm handling with watermark",
+        encoding="utf-8",
+    )
+    (tmp_path / "process_reference.md").write_text(
+        "# Process reference\nEach process module has a dispenser and arm.",
+        encoding="utf-8",
+    )
+    index = MarkdownSearchIndex(tmp_path, chunk_chars=200, overlap_chars=20)
+
+    hits = index.search("dispenser arm process module", top_k=4)
+
+    lam_hits = [hit for hit in hits if "LAM DVP Training" in hit.chunk.source]
+    assert len(lam_hits) <= 2
+    assert any(hit.chunk.source == "process_reference.md" for hit in hits)
+
+
 def test_specific_search_is_anchored_to_question():
     query = resolve_search_query(
         "污染风险上报",
