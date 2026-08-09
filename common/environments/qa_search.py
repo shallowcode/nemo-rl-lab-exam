@@ -12,6 +12,24 @@ _HEADING = re.compile(r"^#{1,6}\s+(.+?)\s*$")
 _LATIN_TOKEN = re.compile(r"[a-z0-9]+(?:[._+\-/][a-z0-9]+)*")
 _CJK_RUN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]+")
 _SEARCH = re.compile(r"<search>\s*(.*?)\s*</search>", re.IGNORECASE | re.DOTALL)
+_QUESTION = re.compile(
+    r"题目\s*[：:]\s*(.*?)(?:\n\s*\n|<\|im_end\|>|\Z)", re.DOTALL
+)
+_GENERIC_SEARCH_QUERIES = frozenset(
+    {
+        "search",
+        "query",
+        "关键词",
+        "搜索关键词",
+        "检索关键词",
+        "简洁关键词",
+        "题目中的真实技术名词",
+        "真实技术名词",
+        "答案",
+        "占位文字",
+        "…",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -46,6 +64,34 @@ def extract_search_query(text: str) -> str | None:
         return None
     query = matches[-1].strip()
     return query or None
+
+
+def _question_stem(question: str) -> str:
+    match = _QUESTION.search(question)
+    stem = match.group(1) if match else question
+    return re.sub(r"\s+", " ", stem).strip()
+
+
+def _is_generic_search_query(query: str) -> bool:
+    normalized = re.sub(r"[\s，,。.!！？?：:；;|/\\…]+", "", _normalize(query))
+    return not normalized or normalized in _GENERIC_SEARCH_QUERIES
+
+
+def resolve_search_query(query: str, question: str, *, max_chars: int = 300) -> str:
+    """Turn a model tool call into a focused retrieval query.
+
+    Base models sometimes copy a prompt placeholder verbatim. In that case the
+    question stem is a substantially safer fallback. For a real model query we
+    still append the stem, which anchors short or ambiguous terms to the task.
+    """
+    stem = _question_stem(question)
+    if _is_generic_search_query(query):
+        resolved = stem
+    elif stem and _normalize(stem) not in _normalize(query):
+        resolved = f"{query.strip()} {stem}"
+    else:
+        resolved = query.strip()
+    return resolved[:max_chars].strip()
 
 
 def _last_assistant_text(message_log: list[dict[str, Any]]) -> str:
@@ -307,12 +353,20 @@ class QASearchRunner:
                     next_metadata,
                     None,
                 )
-            hits = self.index.search(search_query, self.top_k)
+            resolved_query = resolve_search_query(
+                search_query, str(metadata.get("query", ""))
+            )
+            hits = self.index.search(resolved_query, self.top_k)
             next_metadata["num_searches"] = searches + 1
             observation = self.index.format_results(
-                search_query, hits, max_chars=self.max_result_chars
+                resolved_query, hits, max_chars=self.max_result_chars
             )
-            observation += "\n如信息足够，请给出最终 \\boxed{...}；否则可继续检索。"
+            if _is_generic_search_query(search_query):
+                observation += "\n检索词过于宽泛，系统已改用题目内容检索。"
+            observation += (
+                "\n请基于上述真实内部资料判断；信息足够时立即用 \\boxed{...} "
+                "提交答案，不要继续检索。"
+            )
             return (
                 {"role": "environment", "content": observation},
                 0.0,

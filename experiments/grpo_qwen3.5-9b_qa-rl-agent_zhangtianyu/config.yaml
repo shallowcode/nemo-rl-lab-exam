@@ -21,14 +21,14 @@ policy:
       gpu_memory_utilization: 0.6
 
 grpo:
-  num_prompts_per_step: 1
-  num_generations_per_prompt: 8
-  max_rollout_turns: 3
+  num_prompts_per_step: 2
+  num_generations_per_prompt: 4
+  max_rollout_turns: 4
   max_num_steps: 1
   val_period: 100
   val_at_start: true
   val_at_end: true
-  max_val_samples: 16
+  max_val_samples: 32
   val_batch_size: 8
 
 loss_fn:
@@ -43,9 +43,11 @@ data:
   output_key: expected_answer
   data_dir: /data/datasets/qa_rl
   system_prompt: |-
-    你正在完成技术培训考试。你可以先检索内部技术资料，也可以直接回答。
-    检索时只输出 <search>简洁关键词</search>，每次只检索一个主题，最多检索两次。
-    信息足够后必须提交最终答案，并严格使用题目要求的 \boxed{...} 格式。
+    你正在完成技术培训考试，环境可以真实检索公司内部技术资料。
+    每轮只能选择一个动作：
+    1. 需要资料时，只输出一个 <search>...</search> 标签，并把省略号替换为当前题目中的真实技术名词和限定词。不得保留省略号或填写占位文字，不要附加解释。
+    2. 已知答案或收到 <search_results> 后信息足够时，立即提交最终答案，不要继续检索。最终回答最多简要分析两句，并以 \boxed{...} 结束。
+    最多检索两次；内部资料是真实结果，不要声称自己无法访问或没有检索功能。每轮结束前必须确保输出中含有一个有效的 <search> 标签或 \boxed{...}。
     单选和判断只填一个字母，多选按字母顺序用逗号分隔，填空和简答用分号分隔。
 
 env:
@@ -56,13 +58,13 @@ env:
       top_k: 3
       chunk_chars: 1000
       overlap_chars: 150
-      max_result_chars: 2600
+      max_result_chars: 1000
       max_file_bytes: 2000000
       max_searches: 2
-      max_turns: 3
+      max_turns: 4
       k1: 1.5
       b: 0.75
-      use_judge: false
+      use_judge: true
       format_penalty: -0.5
 
 logger:
@@ -70,4 +72,4 @@ logger:
   tensorboard_enabled: false
   swanlab_enabled: false
   monitor_gpus: true
-  num_val_samples_to_print: 3
+  num_val_samples_to_print: 6

@@ -4,6 +4,7 @@ from common.environments.qa_search import (
     MarkdownSearchIndex,
     QASearchRunner,
     extract_search_query,
+    resolve_search_query,
 )
 
 
@@ -40,6 +41,29 @@ def test_result_format_respects_budget(tmp_path):
 def test_extracts_last_search_query():
     text = "<search>旧关键词</search>\n继续思考\n<search>离子注入 系统组成</search>"
     assert extract_search_query(text) == "离子注入 系统组成"
+
+
+def test_placeholder_search_falls_back_to_question_stem():
+    question = (
+        "下面是一道填空题。\n\n"
+        "题目：SERVER ROOM 通过【1】与Clean room进行连接\n\n"
+        "请作答。"
+    )
+
+    query = resolve_search_query("简洁关键词", question)
+
+    assert query == "SERVER ROOM 通过【1】与Clean room进行连接"
+    assert "简洁关键词" not in query
+
+
+def test_specific_search_is_anchored_to_question():
+    query = resolve_search_query(
+        "污染风险上报",
+        "题目：当 MO case 发生时应如何处理？\n\n选项：\nA. 立即上报",
+    )
+
+    assert query.startswith("污染风险上报 ")
+    assert "MO case" in query
 
 
 def test_runner_search_then_answer(tmp_path):
@@ -83,6 +107,47 @@ def test_runner_search_then_answer(tmp_path):
     assert answer_result[1] == 1.0
     assert answer_result[2] is True
     assert answer_result[5] == "A"
+
+
+def test_runner_recovers_placeholder_and_allows_final_turn(tmp_path):
+    (tmp_path / "guide.md").write_text(
+        "# Server Room\nServer Room 通过 SQL Server 与 Clean Room 连接。",
+        encoding="utf-8",
+    )
+    index = MarkdownSearchIndex(tmp_path, chunk_chars=200, overlap_chars=20)
+    runner = QASearchRunner(
+        index,
+        reward_fn=lambda *_args: [1.0],
+        boxed_extractor=lambda text: "SQL Server" if "\\boxed" in text else None,
+        max_searches=2,
+        max_turns=4,
+    )
+    metadata = {
+        "query": "题目：SERVER ROOM 通过【1】与Clean room进行连接",
+        "expected_answer": "[fill] SQL Server",
+        "num_searches": 0,
+        "num_turns": 1,
+    }
+
+    first_search = runner.process_turn(
+        [{"role": "assistant", "content": "<search>简洁关键词</search>"}],
+        metadata,
+    )
+    assert "SQL Server" in first_search[0]["content"]
+    assert "系统已改用题目内容检索" in first_search[0]["content"]
+
+    second_search = runner.process_turn(
+        [{"role": "assistant", "content": "<search>Server Room 连接</search>"}],
+        first_search[4],
+    )
+    assert second_search[2] is False
+
+    final_answer = runner.process_turn(
+        [{"role": "assistant", "content": "\\boxed{SQL Server}"}],
+        second_search[4],
+    )
+    assert final_answer[1] == 1.0
+    assert final_answer[2] is True
 
 
 def test_runner_penalizes_missing_final_answer_on_last_turn(tmp_path):
