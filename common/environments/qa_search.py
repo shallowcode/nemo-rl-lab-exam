@@ -335,7 +335,8 @@ class MarkdownSearchIndex:
         if not hits:
             return (
                 "<search_results>\n"
-                f"查询：{query}\n没有找到匹配资料，请改用更具体的关键词或直接作答。\n"
+                f"查询：{query}\n"
+                "没有找到包含题目关键标识的可靠资料，请勿类推其他机台，直接根据已有知识作答。\n"
                 "</search_results>"
             )
 
@@ -442,7 +443,7 @@ class QASearchRunner:
                 return (
                     {
                         "role": "environment",
-                        "content": "<error>已达到最大轮数，但尚未提交 \\boxed{...} 答案。</error>",
+                        "content": "<error>已达到最大轮数，答案未按题目要求提交。</error>",
                     },
                     self.format_penalty,
                     True,
@@ -454,7 +455,7 @@ class QASearchRunner:
                 return (
                     {
                         "role": "environment",
-                        "content": "<error>检索次数已用完，请根据已有资料直接用 \\boxed{...} 作答。</error>",
+                        "content": "<error>检索次数已用完，请立即按题目要求提交最终答案。</error>",
                     },
                     0.0,
                     False,
@@ -473,8 +474,8 @@ class QASearchRunner:
             if _is_generic_search_query(search_query):
                 observation += "\n检索词过于宽泛，系统已改用题目内容检索。"
             observation += (
-                "\n请基于上述真实内部资料判断；信息足够时立即用 \\boxed{...} "
-                "提交答案，不要继续检索。"
+                "\n请基于上述真实内部资料判断并立即按题目要求提交最终答案，"
+                "不要复述规则或继续检索。"
             )
             return (
                 {"role": "environment", "content": observation},
@@ -502,8 +503,7 @@ class QASearchRunner:
             {
                 "role": "environment",
                 "content": (
-                    "<error>请只选择一种操作：用 <search>关键词</search> 检索，"
-                    "或用 \\boxed{答案} 提交最终答案。</error>"
+                    "<error>输出无效。请停止解释操作，立即按题目要求提交最终答案。</error>"
                 ),
             },
             0.0,

@@ -322,3 +322,29 @@ def test_runner_penalizes_missing_final_answer_on_last_turn(tmp_path):
 
     assert result[1] == -0.5
     assert result[2] is True
+
+
+def test_runner_retry_feedback_does_not_repeat_protocol_tokens(tmp_path):
+    (tmp_path / "guide.md").write_text("# Test\n测试资料", encoding="utf-8")
+    index = MarkdownSearchIndex(tmp_path, chunk_chars=200, overlap_chars=20)
+    runner = QASearchRunner(
+        index,
+        reward_fn=lambda *_args: [0.0],
+        boxed_extractor=lambda _text: None,
+        max_turns=3,
+    )
+    metadata = {
+        "query": "test",
+        "expected_answer": "[single] A",
+        "num_searches": 0,
+        "num_turns": 0,
+    }
+
+    result = runner.process_turn(
+        [{"role": "assistant", "content": "我先解释应该怎样操作。"}], metadata
+    )
+
+    feedback = result[0]["content"]
+    assert result[2] is False
+    assert "<search>" not in feedback
+    assert "\\boxed" not in feedback
