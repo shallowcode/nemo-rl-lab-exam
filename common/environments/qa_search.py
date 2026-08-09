@@ -11,6 +11,10 @@ from typing import Any, Callable
 _HEADING = re.compile(r"^#{1,6}\s+(.+?)\s*$")
 _LATIN_TOKEN = re.compile(r"[a-z0-9]+(?:[._+\-/][a-z0-9]+)*")
 _CJK_RUN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]+")
+_MIXED_IDENTIFIER = re.compile(
+    r"(?i)(?<![a-z0-9])[a-z0-9][a-z0-9._-]{2,}(?![a-z0-9])"
+)
+_UPPER_IDENTIFIER = re.compile(r"(?<![A-Za-z0-9])[A-Z][A-Z0-9]{1,9}(?![A-Za-z0-9])")
 _QUESTION = re.compile(
     r"题目\s*[：:]\s*(.*?)(?:\n\s*\n|<\|im_end\|>|\Z)", re.DOTALL
 )
@@ -74,6 +78,23 @@ def _tokens(text: str) -> list[str]:
         tokens.extend(run)
         tokens.extend(run[i : i + 2] for i in range(len(run) - 1))
     return tokens
+
+
+def _technical_identifiers(text: str) -> set[str]:
+    identifiers = {
+        _normalize(token.strip("._-"))
+        for token in _MIXED_IDENTIFIER.findall(text)
+        if re.search(r"[a-z]", token, re.IGNORECASE) and re.search(r"\d", token)
+    }
+    identifiers.update(_normalize(token) for token in _UPPER_IDENTIFIER.findall(text))
+    return identifiers
+
+
+def _is_substantive_boxed_answer(answer: str | None) -> bool:
+    if answer is None:
+        return False
+    normalized = re.sub(r"[\s，,。.!！?？:：;；…]+", "", _normalize(answer))
+    return bool(normalized) and normalized not in {"answer", "答案", "占位文字"}
 
 
 def extract_search_query(text: str) -> str | None:
@@ -283,10 +304,16 @@ class MarkdownSearchIndex:
                 if normalized_query in compact_chunk:
                     scores[chunk_id] += 4.0
 
+        identifiers = _technical_identifiers(query)
         ranked = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
         hits: list[SearchHit] = []
         seen_bodies: set[str] = set()
         for chunk_id, score in ranked:
+            normalized_chunk = self._normalized_chunks[chunk_id]
+            if identifiers and not all(
+                identifier in normalized_chunk for identifier in identifiers
+            ):
+                continue
             chunk = self.chunks[chunk_id]
             body = chunk.text.split("\n", 1)[-1]
             body_signature = re.sub(r"\s+", "", _normalize(body))
@@ -393,7 +420,7 @@ class QASearchRunner:
         current_turn = next_metadata["num_turns"]
 
         boxed_answer = self.boxed_extractor(completion)
-        if boxed_answer is not None:
+        if _is_substantive_boxed_answer(boxed_answer):
             reward = self.reward_fn(
                 [str(metadata.get("query", ""))],
                 [completion],
@@ -451,7 +478,7 @@ class QASearchRunner:
             )
             return (
                 {"role": "environment", "content": observation},
-                self.first_search_reward if searches == 0 else 0.0,
+                self.first_search_reward if searches == 0 and hits else 0.0,
                 False,
                 ["</search>"],
                 next_metadata,

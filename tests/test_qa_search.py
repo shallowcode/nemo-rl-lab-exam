@@ -75,6 +75,28 @@ def test_latin_compound_query_matches_separated_document_terms(tmp_path):
     assert hits[0].chunk.source == "wet.md"
 
 
+def test_technical_identifier_filters_unrelated_results(tmp_path):
+    (tmp_path / "generic.md").write_text(
+        "# 设备功能\n晶圆盒清洗设备用于清洁载具。", encoding="utf-8"
+    )
+    index = MarkdownSearchIndex(tmp_path, chunk_chars=200, overlap_chars=20)
+
+    hits = index.search("MIAM201 的功能为晶圆在线检测还是晶圆盒清洗", top_k=2)
+
+    assert hits == []
+
+
+def test_uppercase_identifier_requires_exact_document_match(tmp_path):
+    (tmp_path / "invoice.md").write_text(
+        "# 电子发票\n电子发票应提供格式源文件。", encoding="utf-8"
+    )
+    index = MarkdownSearchIndex(tmp_path, chunk_chars=200, overlap_chars=20)
+
+    hits = index.search("OFD格式电子发票必须提供OFD格式源文件", top_k=2)
+
+    assert hits == []
+
+
 def test_placeholder_search_falls_back_to_question_stem():
     question = (
         "下面是一道填空题。\n\n"
@@ -199,6 +221,41 @@ def test_runner_rewards_only_first_search_when_configured(tmp_path):
 
     assert first_search[1] == 0.05
     assert second_search[1] == 0.0
+
+
+def test_runner_ignores_placeholder_box_and_processes_search(tmp_path):
+    (tmp_path / "guide.md").write_text(
+        "# OFD电子发票\nOFD格式电子发票必须提供OFD格式源文件。", encoding="utf-8"
+    )
+    index = MarkdownSearchIndex(tmp_path, chunk_chars=200, overlap_chars=20)
+    from common.rewards.qa_reward import extract_boxed
+
+    runner = QASearchRunner(
+        index,
+        reward_fn=lambda *_args: [0.0],
+        boxed_extractor=extract_boxed,
+        max_turns=3,
+    )
+    metadata = {
+        "query": "OFD格式电子发票必须提供OFD格式源文件。",
+        "expected_answer": "[bool] A",
+        "num_searches": 0,
+        "num_turns": 0,
+    }
+
+    result = runner.process_turn(
+        [
+            {
+                "role": "assistant",
+                "content": r"最终应使用 \boxed{...}。<search>OFD电子发票</search>",
+            }
+        ],
+        metadata,
+    )
+
+    assert result[2] is False
+    assert "OFD格式电子发票" in result[0]["content"]
+    assert result[4]["num_searches"] == 1
 
 
 def test_runner_recovers_placeholder_and_allows_final_turn(tmp_path):
