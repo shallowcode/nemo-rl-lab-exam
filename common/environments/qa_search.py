@@ -11,7 +11,6 @@ from typing import Any, Callable
 _HEADING = re.compile(r"^#{1,6}\s+(.+?)\s*$")
 _LATIN_TOKEN = re.compile(r"[a-z0-9]+(?:[._+\-/][a-z0-9]+)*")
 _CJK_RUN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]+")
-_SEARCH = re.compile(r"<search>\s*(.*?)\s*</search>", re.IGNORECASE | re.DOTALL)
 _QUESTION = re.compile(
     r"题目\s*[：:]\s*(.*?)(?:\n\s*\n|<\|im_end\|>|\Z)", re.DOTALL
 )
@@ -23,12 +22,24 @@ _GENERIC_SEARCH_QUERIES = frozenset(
         "搜索关键词",
         "检索关键词",
         "简洁关键词",
+        "题目中的技术名词和限定词",
+        "技术名词和限定词",
         "题目中的真实技术名词",
         "真实技术名词",
         "答案",
         "占位文字",
         "…",
     }
+)
+_GENERIC_SEARCH_PREFIXES = (
+    "题目中的技术名词和限定词",
+    "技术名词和限定词",
+    "题目中的真实技术名词",
+    "真实技术名词",
+    "搜索关键词",
+    "检索关键词",
+    "简洁关键词",
+    "关键词",
 )
 
 
@@ -51,7 +62,14 @@ def _normalize(text: str) -> str:
 
 def _tokens(text: str) -> list[str]:
     normalized = _normalize(text)
-    tokens = _LATIN_TOKEN.findall(normalized)
+    tokens: list[str] = []
+    for token in _LATIN_TOKEN.findall(normalized):
+        tokens.append(token)
+        # Keep exact technical identifiers while also matching punctuation
+        # variants such as HF/HNO3 vs. "HF : HNO3" in source material.
+        parts = re.findall(r"[a-z0-9]+", token)
+        if len(parts) > 1:
+            tokens.extend(parts)
     for run in _CJK_RUN.findall(normalized):
         tokens.extend(run)
         tokens.extend(run[i : i + 2] for i in range(len(run) - 1))
@@ -59,10 +77,17 @@ def _tokens(text: str) -> list[str]:
 
 
 def extract_search_query(text: str) -> str | None:
-    matches = _SEARCH.findall(text)
-    if not matches:
+    # Base models often mention an opening ``<search>`` token in their
+    # reasoning before emitting the actual tool call. Pair the final closing
+    # tag with its nearest opening tag instead of letting a regex span both.
+    lowered = text.lower()
+    close_at = lowered.rfind("</search>")
+    if close_at < 0:
         return None
-    query = matches[-1].strip()
+    open_at = lowered.rfind("<search>", 0, close_at)
+    if open_at < 0:
+        return None
+    query = text[open_at + len("<search>") : close_at].strip()
     return query or None
 
 
@@ -77,6 +102,16 @@ def _is_generic_search_query(query: str) -> bool:
     return not normalized or normalized in _GENERIC_SEARCH_QUERIES
 
 
+def _strip_generic_search_prefix(query: str) -> str:
+    cleaned = query.strip()
+    normalized = _normalize(cleaned)
+    for prefix in _GENERIC_SEARCH_PREFIXES:
+        if normalized.startswith(prefix):
+            cleaned = cleaned[len(prefix) :]
+            return re.sub(r"^[\s，,。.!！？?：:；;|/\\…-]+", "", cleaned).strip()
+    return cleaned
+
+
 def resolve_search_query(query: str, question: str, *, max_chars: int = 300) -> str:
     """Turn a model tool call into a focused retrieval query.
 
@@ -85,12 +120,13 @@ def resolve_search_query(query: str, question: str, *, max_chars: int = 300) -> 
     still append the stem, which anchors short or ambiguous terms to the task.
     """
     stem = _question_stem(question)
-    if _is_generic_search_query(query):
+    focused_query = _strip_generic_search_prefix(query)
+    if _is_generic_search_query(focused_query):
         resolved = stem
-    elif stem and _normalize(stem) not in _normalize(query):
-        resolved = f"{query.strip()} {stem}"
+    elif stem and _normalize(stem) not in _normalize(focused_query):
+        resolved = f"{focused_query} {stem}"
     else:
-        resolved = query.strip()
+        resolved = focused_query
     return resolved[:max_chars].strip()
 
 
@@ -247,8 +283,20 @@ class MarkdownSearchIndex:
                 if normalized_query in compact_chunk:
                     scores[chunk_id] += 4.0
 
-        ranked = sorted(scores.items(), key=lambda item: (-item[1], item[0]))[:top_k]
-        return [SearchHit(self.chunks[chunk_id], score) for chunk_id, score in ranked]
+        ranked = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
+        hits: list[SearchHit] = []
+        seen_bodies: set[str] = set()
+        for chunk_id, score in ranked:
+            chunk = self.chunks[chunk_id]
+            body = chunk.text.split("\n", 1)[-1]
+            body_signature = re.sub(r"\s+", "", _normalize(body))
+            if body_signature in seen_bodies:
+                continue
+            seen_bodies.add(body_signature)
+            hits.append(SearchHit(chunk, score))
+            if len(hits) >= top_k:
+                break
+        return hits
 
     def format_results(
         self,
@@ -268,14 +316,46 @@ class MarkdownSearchIndex:
         used = sum(len(part) for part in parts)
         for rank, hit in enumerate(hits, 1):
             prefix = f"\n[{rank}] 来源：{hit.chunk.source} | {hit.chunk.heading}\n"
-            remaining = max_chars - used - len(prefix) - len("\n</search_results>")
+            closing_chars = len("\n</search_results>")
+            remaining = max_chars - used - len(prefix) - closing_chars
             if remaining <= 80:
                 break
-            snippet = hit.chunk.text[:remaining]
+            hits_left = len(hits) - rank + 1
+            snippet_budget = max(80, remaining // hits_left)
+            snippet = self._focused_snippet(
+                hit.chunk.text, query, min(600, snippet_budget)
+            )
             parts.append(prefix + snippet)
             used += len(prefix) + len(snippet)
         parts.append("\n</search_results>")
         return "".join(parts)
+
+    @staticmethod
+    def _focused_snippet(text: str, query: str, max_chars: int) -> str:
+        if len(text) <= max_chars:
+            return text
+
+        normalized_text = _normalize(text)
+        candidates = {term for term in _tokens(query) if len(term) >= 2}
+
+        match_at = -1
+        for term in sorted(candidates, key=len, reverse=True):
+            match_at = normalized_text.find(term)
+            if match_at >= 0:
+                break
+
+        if match_at < 0:
+            return text[:max_chars].rstrip()
+
+        start = max(0, match_at - max_chars // 4)
+        end = min(len(text), start + max_chars)
+        start = max(0, end - max_chars)
+        snippet = text[start:end].strip()
+        if start > 0:
+            snippet = "…" + snippet[1:]
+        if end < len(text):
+            snippet = snippet[:-1] + "…"
+        return snippet
 
 
 class QASearchRunner:

@@ -8,34 +8,35 @@ policy:
   model_name: "Qwen/Qwen3.5-9B-Base"
   tokenizer:
     name: "Qwen/Qwen3.5-9B-Base"
-  max_total_sequence_length: 4096
-  train_global_batch_size: 8
-  generation_batch_size: 8
+  max_total_sequence_length: 8192
+  train_global_batch_size: 32
+  generation_batch_size: 16
   generation:
     max_new_tokens: 1536
-    temperature: 1.0
-    top_p: 0.95
-    top_k: 50
+    temperature: 0.8
+    top_p: 0.9
+    top_k: 20
     stop_strings: null
     vllm_cfg:
       gpu_memory_utilization: 0.6
 
 grpo:
-  num_prompts_per_step: 2
-  num_generations_per_prompt: 4
-  max_rollout_turns: 4
-  max_num_steps: 1
-  val_period: 100
+  num_prompts_per_step: 4
+  num_generations_per_prompt: 8
+  max_rollout_turns: 5
+  max_num_steps: 40
+  val_period: 20
   val_at_start: true
   val_at_end: true
-  max_val_samples: 32
-  val_batch_size: 8
+  max_val_samples: 64
+  val_batch_size: 16
 
 loss_fn:
   reference_policy_kl_penalty: 0.01
 
 checkpointing:
-  enabled: false
+  enabled: true
+  save_period: 20
 
 data:
   shuffle: true
@@ -43,11 +44,10 @@ data:
   output_key: expected_answer
   data_dir: /data/datasets/qa_rl
   system_prompt: |-
-    你正在完成技术培训考试，环境可以真实检索公司内部技术资料。
-    每轮只能选择一个动作：
-    1. 需要资料时，只输出一个 <search>...</search> 标签，并把省略号替换为当前题目中的真实技术名词和限定词。不得保留省略号或填写占位文字，不要附加解释。
-    2. 已知答案或收到 <search_results> 后信息足够时，立即提交最终答案，不要继续检索。最终回答最多简要分析两句，并以 \boxed{...} 结束。
-    最多检索两次；内部资料是真实结果，不要声称自己无法访问或没有检索功能。每轮结束前必须确保输出中含有一个有效的 <search> 标签或 \boxed{...}。
+    你正在完成技术培训考试，可以真实检索公司内部资料。
+    需要资料时，直接且仅输出 <search>题目中的技术名词和限定词</search>；不要解释检索动作，不要在思考中书写标签，不要伪造检索结果。
+    收到 <search_results> 后只依据资料判断，信息足够就立即作答。最多检索两次；第二次后必须提交答案，即使资料不完整也要作出最合理判断。
+    最终回答最多两句分析并以题目指定的 \boxed{} 结束，不要复述资料或规则。
     单选和判断只填一个字母，多选按字母顺序用逗号分隔，填空和简答用分号分隔。
 
 env:
@@ -55,13 +55,13 @@ env:
   qa_search:
     cfg:
       docs_dir: /data/docs
-      top_k: 3
+      top_k: 4
       chunk_chars: 1000
       overlap_chars: 150
-      max_result_chars: 1000
+      max_result_chars: 1800
       max_file_bytes: 2000000
       max_searches: 2
-      max_turns: 4
+      max_turns: 5
       k1: 1.5
       b: 0.75
       use_judge: true

@@ -38,9 +38,41 @@ def test_result_format_respects_budget(tmp_path):
     assert len(result) <= 520
 
 
+def test_focused_snippet_keeps_query_match_near_end():
+    text = "无关前文" * 100 + "空压机复机前应检查冷却水压力和报警状态。"
+
+    snippet = MarkdownSearchIndex._focused_snippet(text, "复机检查", 120)
+
+    assert "复机前应检查" in snippet
+    assert len(snippet) <= 120
+
+
 def test_extracts_last_search_query():
     text = "<search>旧关键词</search>\n继续思考\n<search>离子注入 系统组成</search>"
     assert extract_search_query(text) == "离子注入 系统组成"
+
+
+def test_search_query_ignores_unclosed_tag_mentioned_in_reasoning():
+    text = (
+        "需要输出一个 <search> 标签并选择关键词。\n"
+        "最终调用：<search>CWRC201 HF/HNO3 比例 温度</search>"
+    )
+    assert extract_search_query(text) == "CWRC201 HF/HNO3 比例 温度"
+
+
+def test_latin_compound_query_matches_separated_document_terms(tmp_path):
+    (tmp_path / "wet.md").write_text(
+        "# CWRC201\nHF 与 HNO3 的配比和温度需要按机台规范确认。",
+        encoding="utf-8",
+    )
+    (tmp_path / "other.md").write_text(
+        "# 其他资料\n这里只讨论一般温度管理。", encoding="utf-8"
+    )
+    index = MarkdownSearchIndex(tmp_path, chunk_chars=200, overlap_chars=20)
+
+    hits = index.search("CWRC201 HF/HNO3 比例 温度", top_k=2)
+
+    assert hits[0].chunk.source == "wet.md"
 
 
 def test_placeholder_search_falls_back_to_question_stem():
@@ -54,6 +86,33 @@ def test_placeholder_search_falls_back_to_question_stem():
 
     assert query == "SERVER ROOM 通过【1】与Clean room进行连接"
     assert "简洁关键词" not in query
+
+
+def test_placeholder_prefix_is_removed_from_specific_query():
+    question = "题目：CWRC201机台的HF/HNO3比例和温度分别为\n\n选项：\nA. 1:5"
+
+    query = resolve_search_query(
+        "题目中的技术名词和限定词 CWRC201 HF/HNO3 比例 温度", question
+    )
+
+    assert query.startswith("CWRC201 HF/HNO3 比例 温度")
+    assert "题目中的技术名词和限定词" not in query
+
+
+def test_duplicate_document_bodies_are_removed_from_results(tmp_path):
+    repeated = "CDA空压机宕机时，由后备系统继续供应。"
+    (tmp_path / "manual.md").write_text(
+        f"# 后备系统\n{repeated}\n# 13. 后备系统\n{repeated}", encoding="utf-8"
+    )
+    (tmp_path / "recovery.md").write_text(
+        "# 复机检查\n空压机复机前应确认报警消除和冷却水压力。", encoding="utf-8"
+    )
+    index = MarkdownSearchIndex(tmp_path, chunk_chars=200, overlap_chars=20)
+
+    hits = index.search("CDA 空压机", top_k=3)
+
+    bodies = [hit.chunk.text.split("\n", 1)[-1] for hit in hits]
+    assert len(bodies) == len(set(bodies))
 
 
 def test_specific_search_is_anchored_to_question():

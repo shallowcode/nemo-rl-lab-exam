@@ -37,6 +37,28 @@ TASK_NAME = "qa_search"
 STOP_STRINGS = ["</search>"]
 
 
+def _install_nemolab_memory_tracker_workaround() -> None:
+    """Keep optional Ray diagnostics from aborting an otherwise healthy run."""
+    if not os.environ.get("NEMOLAB_ENABLED"):
+        return
+
+    from nemo_rl.utils.memory_tracker import MemoryTrackerDataPoint
+
+    def get_snapshot_str(self) -> str:
+        return (
+            f"Driver CPU memory tracker for {self.stage}:\n"
+            f"- Mem usage before                  "
+            f"{self.memory_used_before_stage_gb:>7.2f} GB\n"
+            f"- Mem usage after                   "
+            f"{self.memory_used_after_stage_gb:>7.2f} GB\n"
+            f"- Mem usage diff (after - before)   {self.mem_used_diff_gb:>+7.2f} GB\n"
+            f"- New variables: {self.new_variables}\n"
+            "- Ray memory snapshot skipped on NeMoLab"
+        )
+
+    MemoryTrackerDataPoint.get_snapshot_str = get_snapshot_str
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="QA document-search GRPO training")
     parser.add_argument("--config", type=str, default=None)
@@ -130,6 +152,7 @@ class QAAgentDataset(Dataset):
 
 
 def main() -> None:
+    _install_nemolab_memory_tracker_workaround()
     register_omegaconf_resolvers()
     args, overrides = parse_args()
     if not args.config:
